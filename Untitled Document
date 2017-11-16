@@ -1,0 +1,58 @@
+DELIMITER $$
+BEGIN
+DECLARE order_cost decimal(10,2);
+DECLARE discount decimal(10,2);
+DECLARE final_cost decimal(10,2);
+DECLARE stock1 INT;
+DECLARE quantity INT;
+DECLARE vid INT;
+DECLARE u_id INT;
+DECLARE v_id INT;
+DECLARE p_id INT;
+DECLARE p_qty INT;
+DECLARE o_id INT;
+DECLARE done BOOL;
+DECLARE cur1 CURSOR FOR SELECT id FROM variants;
+DECLARE cur2 CURSOR FOR
+	SELECT user_id,variant_id,product_id,product_quantity,order_id FROM carts;
+DECLARE CONTINUE HANDLER FOR NOT FOUND SET done = true;
+start transaction;
+OPEN cur1;
+loop1: LOOP
+	FETCH NEXT FROM cur1 INTO vid;
+	IF done THEN
+		LEAVE loop1;
+	END IF;
+	SET stock1 = (SELECT v.stock FROM variants v,carts c, orders o WHERE o.user_id=uid AND o.id=c.order_id AND c.variant_id = v.id AND v.id=vid);
+	SET quantity = (SELECT c.product_quantity FROM carts c,orders o WHERE c.user_id=uid AND c.variant_id=vid AND c.order_id=o.id);
+	IF quantity>stock1 THEN
+		ROLLBACK;
+	ELSE
+		UPDATE variants v,carts c,orders o SET v.stock = (stock1 - quantity) WHERE o.user_id=uid AND o.id=c.order_id AND c.variant_id = v.id AND v.id=vid;
+	END IF;
+END LOOP loop1;
+CLOSE cur1;
+SET done = FALSE;
+SET order_cost=(SELECT SUM(v.price * c.product_quantity) FROM variants v,carts c WHERE c.user_id=uid AND v.id=c.variant_id);
+UPDATE orders SET orders.final_cost = order_cost WHERE orders.user_id=uid;
+
+SET discount = (SELECT p.discount_coupon FROM payments p WHERE p.id=uid);
+SET final_cost = (order_cost - discount);
+UPDATE payments,orders SET payments.checkout_cost = final_cost WHERE payments.order_id=orders.id AND orders.user_id=uid;
+
+OPEN cur2;
+loop2: LOOP
+		FETCH NEXT FROM cur2 INTO u_id,v_id,p_id,p_qty,o_id;
+        SELECT u_id;
+        IF done THEN 
+      		SELECT done;
+        	LEAVE loop2;
+        END IF;
+        INSERT INTO order_history(user_id,variant_id,product_id,product_quantity,order_id) VALUES (u_id,v_id,p_id,p_qty,o_id);
+        SELECT user_id FROM order_history;
+END LOOP loop2;
+CLOSE cur2;
+DELETE FROM carts;
+COMMIT;
+END $$
+DELIMITER ;
